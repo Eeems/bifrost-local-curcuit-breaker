@@ -14,16 +14,27 @@ It keeps a short in-memory cooldown for providers that fail. Other requests skip
 
 ## Config
 
-```go
-providercircuitbreaker.New(providercircuitbreaker.Config{
-    TTL:    10 * time.Second,
-    MaxTTL: 2 * time.Minute,
-})
+Plugin config JSON:
+
+```json
+{
+  "ttl": 10,
+  "max_ttl": 120
+}
 ```
+
+Values are seconds.
+
+- `ttl`: initial unavailable duration after a failed provider call.
+- `max_ttl`: maximum unavailable duration after repeated failures. Can be higher than `ttl`.
+
+The plugin is compiled as a shared object and loaded by Bifrost at runtime.
+
 
 ## Build
 
 ```sh
-go mod tidy
-go test ./...
+GOTOOLCHAIN=go1.24.3 go mod tidy
+GOTOOLCHAIN=go1.24.3 go test ./...
+GOTOOLCHAIN=go1.24.3 CGO_ENABLED=1 go build -buildmode=plugin -o provider-circuit-breaker.so .
 ```

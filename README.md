@@ -26,7 +26,7 @@ Plugin config JSON:
 Values are seconds.
 
 - `ttl`: initial unavailable duration after a failed provider call.
-- `max_ttl`: maximum unavailable duration after repeated failures. Can be higher than `ttl`.
+- `max_ttl`: maximum unavailable duration after repeated failures. Must be higher than `ttl`.
 
 The plugin is compiled as a shared object and loaded by Bifrost at runtime.
 

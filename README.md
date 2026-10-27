@@ -34,7 +34,7 @@ The plugin is compiled as a shared object and loaded by Bifrost at runtime.
 ## Build
 
 ```sh
-GOTOOLCHAIN=go1.24.3 go mod tidy
-GOTOOLCHAIN=go1.24.3 go test ./...
-GOTOOLCHAIN=go1.24.3 CGO_ENABLED=1 go build -buildmode=plugin -o provider-circuit-breaker.so .
+go mod tidy
+go test ./...
+CGO_ENABLED=1 go build -buildmode=plugin -o provider-circuit-breaker.so .
 ```

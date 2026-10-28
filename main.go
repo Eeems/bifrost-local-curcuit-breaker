@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,10 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 		model = req.ResponsesRequest.Model
 	} else if req.TextCompletionRequest != nil {
 		model = req.TextCompletionRequest.Model
+	}
+	// Use only provider portion so fallback models on same provider share cooldown.
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		return model[:i]
 	}
 	return model
 }

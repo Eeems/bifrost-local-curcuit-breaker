@@ -101,11 +101,13 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 	return model
 }
 
-func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.PluginShortCircuit, error) {
+func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
 	if baseTTL <= 0 || req == nil {
+		cleanupExpired()
 		return req, nil, nil
 	}
 	key := providerKeyFromRequest(req)
+	cleanupExpired()
 	if key == "" {
 		return req, nil, nil
 	}
@@ -120,16 +122,24 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		state.Delete(key)
 		return req, nil, nil
 	}
-	if ctx.Value("provider-circuit-breaker:logged-skip") == nil {
-			ctx.Log(schemas.LogLevelInfo, fmt.Sprintf("provider-circuit-breaker: skipping %s until %s", key, entry.until.UTC().Format(time.RFC3339)))
-			ctx.SetValue("provider-circuit-breaker:logged-skip", true)
-		}
 	nowErr := *baseErr
+	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s still unavailable until %s", key, entry.until.UTC().Format(time.RFC3339)))
 	nowErr.Error.Message = fmt.Sprintf("%s is temporarily unavailable until %s", key, entry.until.UTC().Format(time.RFC3339))
-	shortCircuit := &schemas.PluginShortCircuit{
+	shortCircuit := &schemas.LLMPluginShortCircuit{
 		Error: &nowErr,
 	}
 	return req, shortCircuit, nil
+}
+
+func cleanupExpired() {
+	now := time.Now()
+	state.Range(func(key, value any) bool {
+		entry, ok := value.(*providerState)
+		if ok && now.After(entry.until) {
+			state.Delete(key)
+		}
+		return true
+	})
 }
 
 func nextBackoff(base, max time.Duration, failures int) time.Duration {
@@ -174,10 +184,6 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		rawKey, _ := ctx.Value(providerContextKey).(string)
 		if rawKey != "" {
 			state.Delete(rawKey)
-			if ctx.Value("provider-circuit-breaker:logged-reset") == nil {
-				ctx.Log(schemas.LogLevelInfo, fmt.Sprintf("provider-circuit-breaker: reset %s after success", rawKey))
-				ctx.SetValue("provider-circuit-breaker:logged-reset", true)
-			}
 		}
 		return resp, nil, nil
 	}

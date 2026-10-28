@@ -210,7 +210,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		return req, nil, nil
 	}
 	if providerHealthy(key) {
-		ctx.Log(schemas.LogLevelInfo, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
 		ctx.SetValue(providerContextKey, key)
 		raw, ok := state.Load(key)
 		if !ok {

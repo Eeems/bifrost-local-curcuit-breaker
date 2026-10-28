@@ -115,6 +115,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		state.Delete(key)
 		return req, nil, nil
 	}
+	ctx.Log(schemas.LogLevelInfo, fmt.Sprintf("provider-circuit-breaker: skipping %s until %s", key, entry.until.UTC().Format(time.RFC3339)))
 	nowErr := *baseErr
 	nowErr.Error.Message = fmt.Sprintf("%s is temporarily unavailable until %s", key, entry.until.UTC().Format(time.RFC3339))
 	shortCircuit := &schemas.PluginShortCircuit{
@@ -165,6 +166,7 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		rawKey, _ := ctx.Value(providerContextKey).(string)
 		if rawKey != "" {
 			state.Delete(rawKey)
+			ctx.Log(schemas.LogLevelInfo, fmt.Sprintf("provider-circuit-breaker: reset %s after success", rawKey))
 		}
 		return resp, nil, nil
 	}
@@ -185,6 +187,7 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		until:    now.Add(nextBackoff(baseTTL, maxTTL, failures)),
 		failures: failures,
 	})
+	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s temporarily unavailable for %s due to failure %d", provider, nextBackoff(baseTTL, maxTTL, failures), failures))
 	return resp, bifrostErr, nil
 }
 

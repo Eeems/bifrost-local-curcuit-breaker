@@ -171,7 +171,7 @@ func TestProviderHealthy(t *testing.T) {
 		t.Fatal("expected unhealthy for unreachable")
 	}
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second)
+		time.Sleep(1002 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer slow.Close()

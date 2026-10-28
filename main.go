@@ -25,9 +25,9 @@ type providerState struct {
 type providerHealthConfig struct {
 	URL      string
 	PerModel bool
-	Timeout  int
+	Timeout  time.Duration
 	Ignore   bool
-	Poll     int
+	Poll     time.Duration
 }
 
 var (
@@ -113,16 +113,12 @@ func Init(config any) error {
 					}
 					cfg.PerModel = b
 				}
-				if v, ok := val["timeout"]; ok {
-					switch t := v.(type) {
-					case float64:
-						if t <= 0 {
-							return fmt.Errorf("provider %s timeout must be > 0", k)
-						}
-						cfg.Timeout = int(t)
-					default:
-						return fmt.Errorf("provider %s timeout must be number > 0", k)
+				if _, ok := val["timeout"]; ok {
+					d := durationFromConfig(val, "timeout")
+					if d <= 0 {
+						return fmt.Errorf("provider %s timeout must be > 0", k)
 					}
+					cfg.Timeout = d
 				}
 				if v, ok := val["ignore"]; ok {
 					b, ok := v.(bool)
@@ -131,16 +127,12 @@ func Init(config any) error {
 					}
 					cfg.Ignore = b
 				}
-				if v, ok := val["poll"]; ok {
-					switch t := v.(type) {
-					case float64:
-						if t <= 0 {
-							return fmt.Errorf("provider %s poll must be > 0", k)
-						}
-						cfg.Poll = int(t)
-					default:
-						return fmt.Errorf("provider %s poll must be number > 0", k)
+				if _, ok := val["poll"]; ok {
+					d := durationFromConfig(val, "poll")
+					if d <= 0 {
+						return fmt.Errorf("provider %s poll must be > 0", k)
 					}
+					cfg.Poll = d
 				}
 			default:
 				return fmt.Errorf("provider %s config must be object", k)
@@ -165,7 +157,7 @@ func Init(config any) error {
 			continue
 		}
 		go func(name string, pc providerHealthConfig) {
-			ticker := time.NewTicker(time.Duration(pc.Poll) * time.Second)
+			ticker := time.NewTicker(pc.Poll)
 			defer ticker.Stop()
 			for {
 				select {
@@ -313,7 +305,7 @@ func providerHealthy(key string) bool {
 	}
 	timeout := time.Second
 	if pc.Timeout > 0 {
-		timeout = time.Duration(pc.Timeout) * time.Second
+		timeout = pc.Timeout
 	}
 	client := &http.Client{Timeout: timeout}
 	client.Transport = &http.Transport{

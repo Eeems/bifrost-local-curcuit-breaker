@@ -15,17 +15,17 @@ It keeps a short in-memory cooldown for providers that fail. Other requests skip
 ## Config
 
 Top-level:
-- `ttl`: how long a failed provider is avoided after an error.
-- `max_ttl`: longest time a failed provider is avoided after repeated errors.
+- `ttl`: how long a failed provider is avoided after an error (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
+- `max_ttl`: longest time a failed provider is avoided after repeated errors (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
 - `per_model`: by default, each model has its own circuit; set false to share one circuit per provider.
 - `providers`: optional health check and polling settings per provider.
 
 Provider fields (under `providers`):
 - `url`: health endpoint URL to query when checking if a provider is up.
-- `timeout`: how long to wait for a health response before treating it as failed.
+- `timeout`: health request timeout (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
 - `per_model`: override the global per-model setting for this provider.
 - `ignore`: skip health checks for this provider.
-- `poll`: how often, in seconds, to check provider health in the background.
+- `poll`: how often to check provider health in the background (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
 
 ```json
 {
@@ -37,7 +37,7 @@ Provider fields (under `providers`):
       "timeout": 2,
       "per_model": false,
       "ignore": false,
-      "poll": 30
+      "poll": "30s"
     }
   }
 }

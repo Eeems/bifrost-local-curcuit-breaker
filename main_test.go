@@ -87,7 +87,7 @@ func TestInitValidation(t *testing.T) {
 		t.Fatalf("expected 1 provider, got %d", len(providerConfigs))
 	}
 	pc := providerConfigs["p"]
-	if pc.URL != "http://x" || pc.Timeout != 1 || !pc.PerModel || pc.Ignore || pc.Poll != 1 {
+	if pc.URL != "http://x" || pc.Timeout != time.Second || !pc.PerModel || pc.Ignore || pc.Poll != time.Second {
 		t.Fatalf("unexpected provider config: %+v", pc)
 	}
 }
@@ -157,7 +157,7 @@ func TestProviderHealthy(t *testing.T) {
 	}))
 	defer srv.Close()
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: srv.URL, Timeout: 1},
+		"p": {URL: srv.URL, Timeout: time.Second},
 	}
 	if !providerHealthy("p") {
 		t.Fatal("expected healthy")
@@ -167,24 +167,24 @@ func TestProviderHealthy(t *testing.T) {
 		t.Fatal("ignored should be healthy")
 	}
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: "http://127.0.0.1:1", Timeout: 1},
+		"p": {URL: "http://127.0.0.1:1", Timeout: time.Second},
 	}
 	if providerHealthy("p") {
 		t.Fatal("expected unhealthy for unreachable")
 	}
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1002 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer slow.Close()
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: slow.URL, Timeout: 1},
+		"p": {URL: slow.URL, Timeout: 100 * time.Millisecond},
 	}
 	if providerHealthy("p") {
 		t.Fatal("expected timeout to mark unhealthy")
 	}
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: slow.URL, Timeout: 3},
+		"p": {URL: slow.URL, Timeout: 200 * time.Millisecond},
 	}
 	if !providerHealthy("p") {
 		t.Fatal("expected larger timeout to succeed")

@@ -221,7 +221,8 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	} else {
 		markProviderFailed(key)
 	}
-	nowErr := providerError(key)
+	nowErr := *baseErr
+	nowErr.Error.Message = unavailableMessage(key)
 	logProviderUnavailable(ctx, nowErr.Error.Message)
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
 	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
@@ -235,23 +236,15 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		}
 		return resp, nil, nil
 	}
-	provider := string(bifrostErr.ExtraFields.Provider)
-	if pc, ok := providerConfigs[provider]; ok {
-		if !pc.PerModel {
-			if i := strings.IndexByte(provider, '/'); i >= 0 {
-				provider = provider[:i]
-			}
-		}
-	} else if !perModel {
-		if i := strings.IndexByte(provider, '/'); i >= 0 {
-			provider = provider[:i]
-		}
-	}
-	if provider == "" || ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
+	if ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil
 	}
-	markProviderFailed(provider)
-	logProviderUnavailable(ctx, unavailableMessage(provider))
+	key := providerKeyFromError(bifrostErr)
+	if key == "" {
+		return resp, bifrostErr, nil
+	}
+	markProviderFailed(key)
+	logProviderUnavailable(ctx, unavailableMessage(key))
 	return resp, bifrostErr, nil
 }
 
@@ -333,12 +326,6 @@ func markProviderFailed(key string) {
 	})
 }
 
-func providerError(key string) schemas.BifrostError {
-	nowErr := *baseErr
-	nowErr.Error.Message = unavailableMessage(key)
-	return nowErr
-}
-
 func unavailableMessage(key string) string {
 	raw, _ := state.Load(key)
 	entry := raw.(*providerState)
@@ -389,4 +376,39 @@ func durationFromConfig(cfg map[string]any, key string) time.Duration {
 
 func strPtr(v string) *string {
 	return &v
+}
+
+func providerKeyFromError(err *schemas.BifrostError) string {
+	provider := string(err.ExtraFields.Provider)
+	if provider == "" {
+		return ""
+	}
+	model := err.ExtraFields.RoutingInfo.Model
+	if model == "" {
+		model = err.ExtraFields.ResolvedModelUsed
+	}
+	if model == "" {
+		model = err.ExtraFields.OriginalModelRequested
+	}
+	if model == "" {
+		return provider
+	}
+	if i := strings.IndexByte(model, '/'); i < 0 {
+		model = provider + "/" + model
+	}
+	fullModel := model
+	if i := strings.IndexByte(fullModel, '/'); i >= 0 {
+		p := fullModel[:i]
+		if pc, ok := providerConfigs[p]; ok {
+			if pc.PerModel {
+				return fullModel
+			}
+			return p
+		}
+		if perModel {
+			return fullModel
+		}
+		return p
+	}
+	return provider
 }

@@ -269,10 +269,10 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 		provider = string(req.TextCompletionRequest.Provider)
 		model = req.TextCompletionRequest.Model
 	}
-	if provider == "" {
-		provider = providerKey(model)
+	if provider != "" {
+		return resolveProviderKey(provider, model)
 	}
-	return resolveProviderKey(provider, model)
+	return model
 }
 
 func providerKeyFromError(err *schemas.BifrostError) string {
@@ -294,7 +294,7 @@ func resolveProviderKey(provider, model string) string {
 	if model == "" {
 		return provider
 	}
-	if !strings.Contains(model, "/") {
+	if !strings.HasPrefix(model, provider+"/") {
 		model = provider + "/" + model
 	}
 	_perModel := perModel

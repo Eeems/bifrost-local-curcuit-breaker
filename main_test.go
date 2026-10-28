@@ -29,9 +29,9 @@ func TestNextBackoffGrowsAndCaps(t *testing.T) {
 
 func TestProviderKeyFromRequest(t *testing.T) {
 	req := &schemas.BifrostRequest{
-		ChatRequest: &schemas.BifrostChatRequest{Model: "openai/gpt-4o"},
+		ChatRequest: &schemas.BifrostChatRequest{Provider: "openai", Model: "openai/gpt-4o"},
 	}
-	if got := providerKeyFromRequest(req); got != "openai/gpt-4o" {
+	if got := providerKeyFromRequest(req); got != "openai/openai/gpt-4o" {
 		t.Fatalf("expected model key, got %q", got)
 	}
 	if got := providerKeyFromRequest(nil); got != "" {
@@ -208,9 +208,9 @@ func TestMarkProviderFailed(t *testing.T) {
 
 func TestPreLLMHookShortCircuits(t *testing.T) {
 	clearState()
-	state.Store("openai/gpt-4o", &providerState{until: time.Now().Add(time.Minute), failures: 1})
+	state.Store("openai/openai/gpt-4o", &providerState{until: time.Now().Add(time.Minute), failures: 1})
 	ctx := schemas.NewBifrostContext(nil, time.Time{})
-	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{Model: "openai/gpt-4o"}}
+	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{Provider: "openai", Model: "openai/gpt-4o"}}
 	_, sc, err := PreLLMHook(ctx, req)
 	if err != nil || sc == nil {
 		t.Fatalf("expected short circuit, got err=%v sc=%v", err, sc)

@@ -257,22 +257,34 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 	if req == nil {
 		return ""
 	}
-	var model string
-	var provider string
 	if req.ChatRequest != nil {
-		provider = string(req.ChatRequest.Provider)
-		model = req.ChatRequest.Model
-	} else if req.ResponsesRequest != nil {
-		provider = string(req.ResponsesRequest.Provider)
-		model = req.ResponsesRequest.Model
-	} else if req.TextCompletionRequest != nil {
-		provider = string(req.TextCompletionRequest.Provider)
-		model = req.TextCompletionRequest.Model
+		return resolveProviderKey(string(req.ChatRequest.Provider), req.ChatRequest.Model)
 	}
-	if provider != "" {
-		return resolveProviderKey(provider, model)
+	if req.ResponsesRequest != nil {
+		return resolveProviderKey(string(req.ResponsesRequest.Provider), req.ResponsesRequest.Model)
 	}
-	return model
+	if req.TextCompletionRequest != nil {
+		return resolveProviderKey(string(req.TextCompletionRequest.Provider), req.TextCompletionRequest.Model)
+	}
+	if req.EmbeddingRequest != nil {
+		return resolveProviderKey(string(req.EmbeddingRequest.Provider), req.EmbeddingRequest.Model)
+	}
+	if req.ImageGenerationRequest != nil {
+		return resolveProviderKey(string(req.ImageGenerationRequest.Provider), req.ImageGenerationRequest.Model)
+	}
+	if req.OCRRequest != nil {
+		return resolveProviderKey(string(req.OCRRequest.Provider), req.OCRRequest.Model)
+	}
+	if req.RerankRequest != nil {
+		return resolveProviderKey(string(req.RerankRequest.Provider), req.RerankRequest.Model)
+	}
+	if req.SpeechRequest != nil {
+		return resolveProviderKey(string(req.SpeechRequest.Provider), req.SpeechRequest.Model)
+	}
+	if req.TranscriptionRequest != nil {
+		return resolveProviderKey(string(req.TranscriptionRequest.Provider), req.TranscriptionRequest.Model)
+	}
+	return ""
 }
 
 func providerKeyFromError(err *schemas.BifrostError) string {
@@ -291,18 +303,18 @@ func providerKeyFromError(err *schemas.BifrostError) string {
 }
 
 func resolveProviderKey(provider, model string) string {
+	if provider == "" {
+		return ""
+	}
 	if model == "" {
 		return provider
-	}
-	if !strings.HasPrefix(model, provider+"/") {
-		model = provider + "/" + model
 	}
 	_perModel := perModel
 	if pc, ok := providerConfigs[provider]; ok {
 		_perModel = pc.PerModel
 	}
 	if _perModel {
-		return model
+		return provider + "/" + model
 	}
 	return provider
 }

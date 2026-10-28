@@ -215,6 +215,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		markProviderFailed(providerKey(key))
 	} else {
 		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
+		ctx.SetValue("provider-circuit-breaker:provider", providerKey(key))
 		ctx.SetValue(providerContextKey, key)
 		raw, ok := state.Load(key)
 		if !ok {
@@ -244,12 +245,15 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 	if ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil
 	}
-	key := providerKeyFromError(bifrostErr)
-	if key == "" {
+	provider, ok := ctx.Value("provider-circuit-breaker:provider").(string)
+	if !ok || provider == "" {
+		provider = providerKeyFromError(bifrostErr)
+	}
+	if provider == "" {
 		return resp, bifrostErr, nil
 	}
-	markProviderFailed(key)
-	logProviderUnavailable(ctx, unavailableMessage(key))
+	markProviderFailed(provider)
+	logProviderUnavailable(ctx, unavailableMessage(provider))
 	return resp, bifrostErr, nil
 }
 

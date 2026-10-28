@@ -209,7 +209,10 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	if ctx.Value(providerContextKey) == key {
 		return req, nil, nil
 	}
-	if providerHealthy(key) {
+	if modelFailed(key) {
+	} else if !providerHealthy(key) {
+		markProviderFailed(key)
+	} else {
 		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
 		ctx.SetValue(providerContextKey, key)
 		raw, ok := state.Load(key)
@@ -217,16 +220,13 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 			return req, nil, nil
 		}
 		entry := raw.(*providerState)
-		now := time.Now()
-		if now.After(entry.until) {
+		now2 := time.Now()
+		if now2.After(entry.until) {
 			state.Delete(key)
 			return req, nil, nil
 		}
-	} else {
-		markProviderFailed(key)
 	}
-	nowErr := *baseErr
-	nowErr.Error.Message = unavailableMessage(key)
+	nowErr := providerError(key)
 	logProviderUnavailable(ctx, nowErr.Error.Message)
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
 	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
@@ -299,6 +299,9 @@ func isLivenessFailure(err *schemas.BifrostError) bool {
 }
 
 func providerHealthy(key string) bool {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		key = key[:i]
+	}
 	pc, ok := providerConfigs[key]
 	if !ok || pc.Ignore || pc.URL == "" {
 		return true
@@ -319,6 +322,25 @@ func providerHealthy(key string) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
+func modelFailed(model string) bool {
+	if raw, ok := state.Load(model); ok {
+		entry := raw.(*providerState)
+		if time.Now().Before(entry.until) {
+			return true
+		}
+	}
+	i := strings.IndexByte(model, '/')
+	if i < 0 {
+		return false
+	}
+	raw, ok := state.Load(model[:i])
+	if !ok {
+		return false
+	}
+	entry := raw.(*providerState)
+	return time.Now().Before(entry.until)
+}
+
 func markProviderFailed(key string) {
 	failures := 1
 	if raw, ok := state.Load(key); ok {
@@ -328,6 +350,12 @@ func markProviderFailed(key string) {
 		until:    time.Now().Add(nextBackoff(baseTTL, maxTTL, failures)),
 		failures: failures,
 	})
+}
+
+func providerError(key string) schemas.BifrostError {
+	nowErr := *baseErr
+	nowErr.Error.Message = unavailableMessage(key)
+	return nowErr
 }
 
 func unavailableMessage(key string) string {

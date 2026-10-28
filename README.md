@@ -15,16 +15,17 @@ It keeps a short in-memory cooldown for providers that fail. Other requests skip
 ## Config
 
 Top-level:
-- `ttl`: initial unavailable duration after a failed provider call.
-- `max_ttl`: maximum unavailable duration after repeated failures. Must be higher than `ttl`.
-- `providers`: map of provider name to optional health check and polling settings.
+- `ttl`: how long a failed provider is avoided after an error.
+- `max_ttl`: longest time a failed provider is avoided after repeated errors.
+- `per_model`: by default, each model has its own circuit; set false to share one circuit per provider.
+- `providers`: optional health check and polling settings per provider.
 
 Provider fields (under `providers`):
-- `url`: health endpoint to GET.
-- `timeout`: request timeout in seconds.
-- `per_model`: use per-model circuit keys.
+- `url`: health endpoint URL to query when checking if a provider is up.
+- `timeout`: how long to wait for a health response before treating it as failed.
+- `per_model`: override the global per-model setting for this provider.
 - `ignore`: skip health checks for this provider.
-- `poll`: background poll interval in seconds.
+- `poll`: how often, in seconds, to check provider health in the background.
 
 ```json
 {
@@ -32,7 +33,7 @@ Provider fields (under `providers`):
   "max_ttl": 120,
   "providers": {
     "strata": {
-      "url": "http://strata/health",
+      "url": "http://localhost:8080/health",
       "timeout": 2,
       "per_model": false,
       "ignore": false,
@@ -41,12 +42,6 @@ Provider fields (under `providers`):
   }
 }
 ```
-
-Values are seconds.
-
-
-The plugin is compiled as a shared object and loaded by Bifrost at runtime.
-
 
 ## Build
 

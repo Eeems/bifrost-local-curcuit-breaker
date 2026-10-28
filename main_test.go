@@ -30,7 +30,7 @@ func TestProviderKeyFromRequest(t *testing.T) {
 	req := &schemas.BifrostRequest{
 		ChatRequest: &schemas.BifrostChatRequest{Model: "openai/gpt-4o"},
 	}
-	if got := providerKeyFromRequest(req); got != "openai" {
+	if got := providerKeyFromRequest(req); got != "openai/gpt-4o" {
 		t.Fatalf("expected model key, got %q", got)
 	}
 	if got := providerKeyFromRequest(nil); got != "" {
@@ -72,6 +72,9 @@ func TestInitValidation(t *testing.T) {
 		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": true, "ignore": false, "poll": 0},
 	}}); err == nil {
 		t.Fatal("expected error for bad poll")
+	}
+	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "foo": 1}); err == nil {
+		t.Fatal("expected error for unexpected key")
 	}
 	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
 		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": true, "ignore": false, "poll": 1},
@@ -140,7 +143,7 @@ func TestPostLLMMarksProvider(t *testing.T) {
 	ctx.SetValue(providerContextKey, "openai/gpt-4o")
 
 	PostLLMHook(ctx, nil, bifrostErr)
-	if _, ok := state.Load("openai"); !ok {
+	if _, ok := state.Load("openai/gpt-4o"); !ok {
 		t.Fatal("expected provider to be marked")
 	}
 	clearState()
@@ -203,7 +206,7 @@ func TestMarkProviderFailed(t *testing.T) {
 
 func TestPreLLMHookShortCircuits(t *testing.T) {
 	clearState()
-	state.Store("openai", &providerState{until: time.Now().Add(time.Minute), failures: 1})
+	state.Store("openai/gpt-4o", &providerState{until: time.Now().Add(time.Minute), failures: 1})
 	ctx := schemas.NewBifrostContext(nil, time.Time{})
 	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{Model: "openai/gpt-4o"}}
 	_, sc, err := PreLLMHook(ctx, req)

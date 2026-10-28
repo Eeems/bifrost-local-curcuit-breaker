@@ -46,13 +46,21 @@ var (
 	statusServiceUnavailable int = http.StatusServiceUnavailable
 )
 
+var perModel bool = true
 var cancelPolls context.CancelFunc
 var providerContextKey = schemas.BifrostContextKey("provider-circuit-breaker-key")
 
 func Init(config any) error {
 	cfg, ok := config.(map[string]any)
 	if !ok {
-		return fmt.Errorf("invalid config format")
+		return fmt.Errorf("config must be object")
+	}
+	for k := range cfg {
+		switch k {
+		case "ttl", "max_ttl", "per_model", "providers":
+		default:
+			return fmt.Errorf("unexpected config key %s", k)
+		}
 	}
 	if ttl := durationFromConfig(cfg, "ttl"); ttl > 0 {
 		baseTTL = ttl
@@ -67,6 +75,13 @@ func Init(config any) error {
 	if maxTTL < baseTTL {
 		return fmt.Errorf("maxTTL must be >= baseTTL")
 	}
+	if v, ok := cfg["per_model"]; ok {
+		b, ok := v.(bool)
+		if !ok {
+			return fmt.Errorf("per_model must be bool")
+		}
+		perModel = b
+	}
 	if raw, ok := cfg["providers"]; ok {
 		providersRaw, ok := raw.(map[string]any)
 		if !ok {
@@ -77,6 +92,13 @@ func Init(config any) error {
 			cfg := providerHealthConfig{}
 			switch val := v.(type) {
 			case map[string]any:
+				for field := range val {
+					switch field {
+					case "url", "timeout", "per_model", "ignore", "poll":
+					default:
+						return fmt.Errorf("provider %s unexpected key %s", k, field)
+					}
+				}
 				if v, ok := val["url"]; ok {
 					u, ok := v.(string)
 					if !ok || u == "" {
@@ -214,8 +236,16 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		return resp, nil, nil
 	}
 	provider := string(bifrostErr.ExtraFields.Provider)
-	if i := strings.IndexByte(provider, '/'); i >= 0 {
-		provider = provider[:i]
+	if pc, ok := providerConfigs[provider]; ok {
+		if !pc.PerModel {
+			if i := strings.IndexByte(provider, '/'); i >= 0 {
+				provider = provider[:i]
+			}
+		}
+	} else if !perModel {
+		if i := strings.IndexByte(provider, '/'); i >= 0 {
+			provider = provider[:i]
+		}
 	}
 	if provider == "" || ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil
@@ -239,7 +269,13 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 	}
 	if i := strings.IndexByte(model, '/'); i >= 0 {
 		provider := model[:i]
-		if pc, ok := providerConfigs[provider]; ok && pc.PerModel {
+		if pc, ok := providerConfigs[provider]; ok {
+			if pc.PerModel {
+				return model
+			}
+			return provider
+		}
+		if perModel {
 			return model
 		}
 		return provider

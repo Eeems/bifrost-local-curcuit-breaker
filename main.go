@@ -128,6 +128,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	shortCircuit := &schemas.LLMPluginShortCircuit{
 		Error: &nowErr,
 	}
+	ctx.SetValue("provider-circuit-breaker:skipped", true)
 	return req, shortCircuit, nil
 }
 
@@ -186,6 +187,9 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 			state.Delete(rawKey)
 		}
 		return resp, nil, nil
+	}
+	if ctx.Value("provider-circuit-breaker:skipped") != nil {
+		return resp, bifrostErr, nil
 	}
 	if !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil

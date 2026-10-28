@@ -102,10 +102,9 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 }
 
 func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
-	now := time.Now()
 	state.Range(func(key, value any) bool {
 		entry, ok := value.(*providerState)
-		if ok && now.After(entry.until) {
+		if ok && time.Now().After(entry.until) {
 			state.Delete(key)
 		}
 		return true
@@ -137,7 +136,6 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
 	return req, shortCircuit, nil
 }
-
 
 func nextBackoff(base, max time.Duration, failures int) time.Duration {
 	if failures < 1 {

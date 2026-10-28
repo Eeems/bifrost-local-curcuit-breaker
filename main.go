@@ -258,14 +258,21 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 		return ""
 	}
 	var model string
+	var provider string
 	if req.ChatRequest != nil {
+		provider = string(req.ChatRequest.Provider)
 		model = req.ChatRequest.Model
 	} else if req.ResponsesRequest != nil {
+		provider = string(req.ResponsesRequest.Provider)
 		model = req.ResponsesRequest.Model
 	} else if req.TextCompletionRequest != nil {
+		provider = string(req.TextCompletionRequest.Provider)
 		model = req.TextCompletionRequest.Model
 	}
-	return resolveProviderKey(providerKey(model), model)
+	if provider == "" {
+		provider = providerKey(model)
+	}
+	return resolveProviderKey(provider, model)
 }
 
 func providerKeyFromError(err *schemas.BifrostError) string {

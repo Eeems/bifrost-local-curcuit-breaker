@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -19,21 +22,31 @@ type providerState struct {
 	failures int
 }
 
+type providerHealthConfig struct {
+	URL      string
+	PerModel bool
+	Timeout  int
+	Ignore   bool
+	Poll     int
+}
+
 var (
 	pluginName               = "provider-circuit-breaker"
 	baseTTL    time.Duration = 10 * time.Second
 	maxTTL     time.Duration = 2 * time.Minute
 	baseErr                  = &schemas.BifrostError{
-		StatusCode: intPtr(503),
 		Error: &schemas.ErrorField{
 			Type:    strPtr("provider_unavailable"),
 			Code:    strPtr("provider_circuit_open"),
 			Message: "provider is temporarily unavailable",
 		},
 	}
-	state sync.Map
+	state                    sync.Map
+	providerConfigs          map[string]providerHealthConfig
+	statusServiceUnavailable int = http.StatusServiceUnavailable
 )
 
+var cancelPolls context.CancelFunc
 var providerContextKey = schemas.BifrostContextKey("provider-circuit-breaker-key")
 
 func Init(config any) error {
@@ -43,12 +56,111 @@ func Init(config any) error {
 	}
 	if ttl := durationFromConfig(cfg, "ttl"); ttl > 0 {
 		baseTTL = ttl
+	} else {
+		return fmt.Errorf("baseTTL must be > 0")
 	}
 	if maxTTLVal := durationFromConfig(cfg, "max_ttl"); maxTTLVal > 0 {
 		maxTTL = maxTTLVal
+	} else {
+		return fmt.Errorf("maxTTL must be > 0")
 	}
 	if maxTTL < baseTTL {
-		maxTTL = baseTTL
+		return fmt.Errorf("maxTTL must be >= baseTTL")
+	}
+	if raw, ok := cfg["providers"]; ok {
+		providersRaw, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("providers must be an object")
+		}
+		providerConfigs = map[string]providerHealthConfig{}
+		for k, v := range providersRaw {
+			cfg := providerHealthConfig{}
+			switch val := v.(type) {
+			case map[string]any:
+				if v, ok := val["url"]; ok {
+					u, ok := v.(string)
+					if !ok || u == "" {
+						return fmt.Errorf("provider %s url must be a non-empty string", k)
+					}
+					cfg.URL = u
+				}
+				if v, ok := val["per_model"]; ok {
+					b, ok := v.(bool)
+					if !ok {
+						return fmt.Errorf("provider %s per_model must be bool", k)
+					}
+					cfg.PerModel = b
+				}
+				if v, ok := val["timeout"]; ok {
+					t, ok := v.(int)
+					if !ok || t <= 0 {
+						return fmt.Errorf("provider %s timeout must be int > 0", k)
+					}
+					cfg.Timeout = t
+				}
+				if v, ok := val["ignore"]; ok {
+					b, ok := v.(bool)
+					if !ok {
+						return fmt.Errorf("provider %s ignore must be bool", k)
+					}
+					cfg.Ignore = b
+				}
+				if v, ok := val["poll"]; ok {
+					t, ok := v.(int)
+					if !ok || t <= 0 {
+						return fmt.Errorf("provider %s poll must be int > 0", k)
+					}
+					cfg.Poll = t
+				}
+			default:
+				return fmt.Errorf("provider %s config must be object", k)
+			}
+			providerConfigs[k] = cfg
+		}
+	}
+	hasPoll := false
+	for _, pc := range providerConfigs {
+		if pc.Poll > 0 && !pc.Ignore && pc.URL != "" {
+			hasPoll = true
+			break
+		}
+	}
+	if !hasPoll {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelPolls = cancel
+	for name, pc := range providerConfigs {
+		if pc.Poll <= 0 || pc.Ignore || pc.URL == "" {
+			continue
+		}
+		go func(name string, pc providerHealthConfig) {
+			ticker := time.NewTicker(time.Duration(pc.Poll) * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if raw, ok := state.Load(name); ok {
+						entry := raw.(*providerState)
+						if time.Now().Before(entry.until) {
+							continue
+						}
+					}
+					if !providerHealthy(name) {
+						markProviderFailed(name)
+					}
+				}
+			}
+		}(name, pc)
+	}
+	return nil
+}
+
+func Cleanup() error {
+	if cancelPolls != nil {
+		cancelPolls()
 	}
 	return nil
 }
@@ -57,8 +169,165 @@ func GetName() string {
 	return pluginName
 }
 
-func Cleanup() error {
-	return nil
+func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
+	state.Range(func(key, value any) bool {
+		entry, ok := value.(*providerState)
+		if ok && time.Now().After(entry.until) {
+			state.Delete(key)
+		}
+		return true
+	})
+	if req == nil {
+		return req, nil, nil
+	}
+	key := providerKeyFromRequest(req)
+	if key == "" {
+		return req, nil, nil
+	}
+	if providerHealthy(key) {
+		ctx.SetValue(providerContextKey, key)
+		raw, ok := state.Load(key)
+		if !ok {
+			return req, nil, nil
+		}
+		entry := raw.(*providerState)
+		now := time.Now()
+		if now.After(entry.until) {
+			state.Delete(key)
+			return req, nil, nil
+		}
+	} else {
+		markProviderFailed(key)
+	}
+	nowErr := providerError(key)
+	logProviderUnavailable(ctx, nowErr.Error.Message)
+	ctx.SetValue("provider-circuit-breaker:skipped", true)
+	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
+}
+
+func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
+	if bifrostErr == nil {
+		rawKey, _ := ctx.Value(providerContextKey).(string)
+		if rawKey != "" {
+			state.Delete(rawKey)
+		}
+		return resp, nil, nil
+	}
+	provider := string(bifrostErr.ExtraFields.Provider)
+	if i := strings.IndexByte(provider, '/'); i >= 0 {
+		provider = provider[:i]
+	}
+	if provider == "" || ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
+		return resp, bifrostErr, nil
+	}
+	markProviderFailed(provider)
+	logProviderUnavailable(ctx, unavailableMessage(provider))
+	return resp, bifrostErr, nil
+}
+
+func providerKeyFromRequest(req *schemas.BifrostRequest) string {
+	if req == nil {
+		return ""
+	}
+	var model string
+	if req.ChatRequest != nil {
+		model = req.ChatRequest.Model
+	} else if req.ResponsesRequest != nil {
+		model = req.ResponsesRequest.Model
+	} else if req.TextCompletionRequest != nil {
+		model = req.TextCompletionRequest.Model
+	}
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		provider := model[:i]
+		if pc, ok := providerConfigs[provider]; ok && pc.PerModel {
+			return model
+		}
+		return provider
+	}
+	return model
+}
+
+func isLivenessFailure(err *schemas.BifrostError) bool {
+	if err == nil {
+		return false
+	}
+	if (err.Error != nil && err.Error.Code != nil && *err.Error.Code == "provider_circuit_open") ||
+		(err.StatusCode != nil && *err.StatusCode >= 500 && *err.StatusCode <= 599) {
+		return true
+	}
+	errType := ""
+	if err.Error != nil && err.Error.Type != nil {
+		errType = *err.Error.Type
+	}
+	if errType == "timeout" || errType == "network_error" || errType == "connection_error" {
+		return true
+	}
+	return false
+}
+
+func providerHealthy(key string) bool {
+	pc, ok := providerConfigs[key]
+	if !ok || pc.Ignore || pc.URL == "" {
+		return true
+	}
+	timeout := time.Second
+	if pc.Timeout > 0 {
+		timeout = time.Duration(pc.Timeout) * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+	client.Transport = &http.Transport{
+		DialContext: (&net.Dialer{Timeout: 500 * time.Millisecond}).DialContext,
+	}
+	resp, err := client.Get(pc.URL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+func markProviderFailed(key string) {
+	failures := 1
+	if raw, ok := state.Load(key); ok {
+		failures = raw.(*providerState).failures + 1
+	}
+	state.Store(key, &providerState{
+		until:    time.Now().Add(nextBackoff(baseTTL, maxTTL, failures)),
+		failures: failures,
+	})
+}
+
+func providerError(key string) schemas.BifrostError {
+	nowErr := *baseErr
+	nowErr.Error.Message = unavailableMessage(key)
+	return nowErr
+}
+
+func unavailableMessage(key string) string {
+	raw, _ := state.Load(key)
+	entry := raw.(*providerState)
+	return fmt.Sprintf("%s is temporarily unavailable until %s", key, entry.until.UTC().Format(time.RFC3339))
+}
+
+func logProviderUnavailable(ctx *schemas.BifrostContext, msg string) {
+	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s", msg))
+}
+
+func nextBackoff(base, max time.Duration, failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	if failures > 30 {
+		failures = 30
+	}
+	delay := base * time.Duration(1<<uint(failures-1))
+	if delay > max {
+		delay = max
+	}
+	if delay < 0 {
+		delay = max
+	}
+	return delay
 }
 
 func durationFromConfig(cfg map[string]any, key string) time.Duration {
@@ -80,134 +349,6 @@ func durationFromConfig(cfg map[string]any, key string) time.Duration {
 		}
 	}
 	return 0
-}
-
-func providerKeyFromRequest(req *schemas.BifrostRequest) string {
-	if req == nil {
-		return ""
-	}
-	var model string
-	if req.ChatRequest != nil {
-		model = req.ChatRequest.Model
-	} else if req.ResponsesRequest != nil {
-		model = req.ResponsesRequest.Model
-	} else if req.TextCompletionRequest != nil {
-		model = req.TextCompletionRequest.Model
-	}
-	// Use only provider portion so fallback models on same provider share cooldown.
-	if i := strings.IndexByte(model, '/'); i >= 0 {
-		return model[:i]
-	}
-	return model
-}
-
-func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
-	state.Range(func(key, value any) bool {
-		entry, ok := value.(*providerState)
-		if ok && time.Now().After(entry.until) {
-			state.Delete(key)
-		}
-		return true
-	})
-	if baseTTL <= 0 || req == nil {
-		return req, nil, nil
-	}
-	key := providerKeyFromRequest(req)
-	if key == "" {
-		return req, nil, nil
-	}
-	ctx.SetValue(providerContextKey, key)
-	raw, ok := state.Load(key)
-	if !ok {
-		return req, nil, nil
-	}
-	entry := raw.(*providerState)
-	now := time.Now()
-	if now.After(entry.until) {
-		state.Delete(key)
-		return req, nil, nil
-	}
-	nowErr := *baseErr
-	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s still unavailable until %s", key, entry.until.UTC().Format(time.RFC3339)))
-	nowErr.Error.Message = fmt.Sprintf("%s is temporarily unavailable until %s", key, entry.until.UTC().Format(time.RFC3339))
-	shortCircuit := &schemas.LLMPluginShortCircuit{
-		Error: &nowErr,
-	}
-	ctx.SetValue("provider-circuit-breaker:skipped", true)
-	return req, shortCircuit, nil
-}
-
-func nextBackoff(base, max time.Duration, failures int) time.Duration {
-	if failures < 1 {
-		failures = 1
-	}
-	if failures > 30 {
-		failures = 30
-	}
-	delay := base * time.Duration(1<<uint(failures-1))
-	if delay > max {
-		delay = max
-	}
-	if delay < 0 {
-		delay = max
-	}
-	return delay
-}
-
-func isLivenessFailure(err *schemas.BifrostError) bool {
-	if err == nil {
-		return false
-	}
-	if err.Error != nil && err.Error.Code != nil && *err.Error.Code == "provider_circuit_open" {
-		return false
-	}
-	if err.StatusCode != nil && *err.StatusCode >= 500 && *err.StatusCode <= 599 {
-		return true
-	}
-	errType := ""
-	if err.Error != nil && err.Error.Type != nil {
-		errType = *err.Error.Type
-	}
-	if errType == "timeout" || errType == "network_error" || errType == "connection_error" {
-		return true
-	}
-	return false
-}
-
-func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
-	if bifrostErr == nil {
-		rawKey, _ := ctx.Value(providerContextKey).(string)
-		if rawKey != "" {
-			state.Delete(rawKey)
-		}
-		return resp, nil, nil
-	}
-	if ctx.Value("provider-circuit-breaker:skipped") != nil {
-		return resp, bifrostErr, nil
-	}
-	if !isLivenessFailure(bifrostErr) {
-		return resp, bifrostErr, nil
-	}
-	provider := string(bifrostErr.ExtraFields.Provider)
-	if provider == "" {
-		return resp, bifrostErr, nil
-	}
-	failures := 1
-	if raw, ok := state.Load(provider); ok {
-		old := raw.(*providerState)
-		failures = old.failures + 1
-	}
-	now := time.Now()
-	state.Store(provider, &providerState{
-		until:    now.Add(nextBackoff(baseTTL, maxTTL, failures)),
-		failures: failures,
-	})
-	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s temporarily unavailable for %s due to failure %d", provider, nextBackoff(baseTTL, maxTTL, failures), failures))
-	return resp, bifrostErr, nil
-}
-
-func intPtr(v int) *int {
-	return &v
 }
 
 func strPtr(v string) *string {

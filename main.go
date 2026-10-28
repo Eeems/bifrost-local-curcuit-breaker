@@ -102,12 +102,18 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 }
 
 func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
+	now := time.Now()
+	state.Range(func(key, value any) bool {
+		entry, ok := value.(*providerState)
+		if ok && now.After(entry.until) {
+			state.Delete(key)
+		}
+		return true
+	})
 	if baseTTL <= 0 || req == nil {
-		cleanupExpired()
 		return req, nil, nil
 	}
 	key := providerKeyFromRequest(req)
-	cleanupExpired()
 	if key == "" {
 		return req, nil, nil
 	}
@@ -132,16 +138,6 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	return req, shortCircuit, nil
 }
 
-func cleanupExpired() {
-	now := time.Now()
-	state.Range(func(key, value any) bool {
-		entry, ok := value.(*providerState)
-		if ok && now.After(entry.until) {
-			state.Delete(key)
-		}
-		return true
-	})
-}
 
 func nextBackoff(base, max time.Duration, failures int) time.Duration {
 	if failures < 1 {

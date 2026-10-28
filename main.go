@@ -114,11 +114,15 @@ func Init(config any) error {
 					cfg.PerModel = b
 				}
 				if v, ok := val["timeout"]; ok {
-					t, ok := v.(int)
-					if !ok || t <= 0 {
-						return fmt.Errorf("provider %s timeout must be int > 0", k)
+					switch t := v.(type) {
+					case float64:
+						if t <= 0 {
+							return fmt.Errorf("provider %s timeout must be > 0", k)
+						}
+						cfg.Timeout = int(t)
+					default:
+						return fmt.Errorf("provider %s timeout must be number > 0", k)
 					}
-					cfg.Timeout = t
 				}
 				if v, ok := val["ignore"]; ok {
 					b, ok := v.(bool)
@@ -128,11 +132,15 @@ func Init(config any) error {
 					cfg.Ignore = b
 				}
 				if v, ok := val["poll"]; ok {
-					t, ok := v.(int)
-					if !ok || t <= 0 {
-						return fmt.Errorf("provider %s poll must be int > 0", k)
+					switch t := v.(type) {
+					case float64:
+						if t <= 0 {
+							return fmt.Errorf("provider %s poll must be > 0", k)
+						}
+						cfg.Poll = int(t)
+					default:
+						return fmt.Errorf("provider %s poll must be number > 0", k)
 					}
-					cfg.Poll = t
 				}
 			default:
 				return fmt.Errorf("provider %s config must be object", k)

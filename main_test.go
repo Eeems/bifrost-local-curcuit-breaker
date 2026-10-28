@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -39,46 +40,47 @@ func TestProviderKeyFromRequest(t *testing.T) {
 }
 
 func TestInitValidation(t *testing.T) {
-	if err := Init(map[string]any{}); err == nil {
+	mustJSON := func(s string) map[string]any {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if err := Init(mustJSON(`{}`)); err == nil {
 		t.Fatal("expected error for missing ttl")
 	}
-	if err := Init(map[string]any{"ttl": "bad", "max_ttl": 2, "providers": map[string]any{}}); err == nil {
+	if err := Init(mustJSON(`{"ttl":"bad","max_ttl":2}`)); err == nil {
 		t.Fatal("expected error for invalid ttl")
 	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 0, "providers": map[string]any{}}); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":0}`)); err == nil {
 		t.Fatal("expected error for invalid max_ttl")
 	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "", "timeout": 1, "per_model": true, "ignore": false, "poll": 1},
-	}}); err == nil {
-		t.Fatal("expected error for empty url")
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":"bad"}`)); err == nil {
+		t.Fatal("expected error for invalid providers")
 	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "http://x", "timeout": 0, "per_model": true, "ignore": false, "poll": 1},
-	}}); err == nil {
-		t.Fatal("expected error for bad timeout")
-	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": "bad", "ignore": false, "poll": 1},
-	}}); err == nil {
-		t.Fatal("expected error for bad per_model")
-	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": true, "ignore": "bad", "poll": 1},
-	}}); err == nil {
-		t.Fatal("expected error for bad ignore")
-	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": true, "ignore": false, "poll": 0},
-	}}); err == nil {
-		t.Fatal("expected error for bad poll")
-	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "foo": 1}); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"foo":1}`)); err == nil {
 		t.Fatal("expected error for unexpected key")
 	}
-	if err := Init(map[string]any{"ttl": 1, "max_ttl": 2, "providers": map[string]any{
-		"p": map[string]any{"url": "http://x", "timeout": 1, "per_model": true, "ignore": false, "poll": 1},
-	}}); err != nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"","timeout":1,"per_model":true,"ignore":false,"poll":1}}}`)); err == nil {
+		t.Fatal("expected error for empty url")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":0,"per_model":true,"ignore":false,"poll":1}}}`)); err == nil {
+		t.Fatal("expected error for bad timeout")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":"bad","ignore":false,"poll":1}}}`)); err == nil {
+		t.Fatal("expected error for bad per_model")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":"bad","poll":1}}}`)); err == nil {
+		t.Fatal("expected error for bad ignore")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":0}}}`)); err == nil {
+		t.Fatal("expected error for bad poll")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":1,"extra":1}}}`)); err == nil {
+		t.Fatal("expected error for unexpected provider key")
+	}
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":1}}}`)); err != nil {
 		t.Fatalf("expected valid config, got %v", err)
 	}
 	if len(providerConfigs) != 1 {

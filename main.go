@@ -173,11 +173,6 @@ func Init(config any) error {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if raw, ok := state.Load(name); ok {
-						if time.Now().Before(raw.(*providerState).until) {
-							continue
-						}
-					}
 					if providerHealthy(name) {
 						state.Delete(name)
 					} else {

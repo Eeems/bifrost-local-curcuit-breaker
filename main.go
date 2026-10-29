@@ -32,24 +32,15 @@ type providerHealthConfig struct {
 }
 
 var (
-	pluginName                  = "provider-circuit-breaker"
-	baseTTL       time.Duration = 10 * time.Second
-	maxTTL        time.Duration = 2 * time.Minute
-	perModel      bool          = true
-	ignoreMissing bool          = false
-	baseErr                     = &schemas.BifrostError{
-		StatusCode: func() *int { v := http.StatusServiceUnavailable; return &v }(),
-		Error: &schemas.ErrorField{
-			Type:    strPtr("provider_unavailable"),
-			Code:    strPtr("provider_circuit_open"),
-			Message: "provider is temporarily unavailable",
-		},
-	}
-	state                    sync.Map
-	providerConfigs          map[string]providerHealthConfig
-	statusServiceUnavailable int = http.StatusServiceUnavailable
-	providerContextKey           = schemas.BifrostContextKey("provider-circuit-breaker-key")
-	cancelPolls              context.CancelFunc
+	pluginName                       = "provider-circuit-breaker"
+	baseTTL            time.Duration = 10 * time.Second
+	maxTTL             time.Duration = 2 * time.Minute
+	perModel           bool          = true
+	ignoreMissing      bool          = false
+	state              sync.Map
+	providerConfigs    map[string]providerHealthConfig
+	providerContextKey = schemas.BifrostContextKey("provider-circuit-breaker-key")
+	cancelPolls        context.CancelFunc
 )
 
 func Init(config any) error {
@@ -240,17 +231,27 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		if !ok {
 			return req, nil, nil
 		}
-		entry := raw.(*providerState)
-		now2 := time.Now()
-		if now2.After(entry.until) {
+		if time.Now().After(raw.(*providerState).until) {
 			state.Delete(key)
 			return req, nil, nil
 		}
 	}
-	nowErr := providerError(key)
-	ctx.Log(schemas.LogLevelWarn, nowErr.Error.Message)
+	msg := unavailableMessage(key)
+	ctx.Log(schemas.LogLevelWarn, msg)
+	raw, _ := state.Load(key)
+	retryAfter := int(time.Until(raw.(*providerState).until).Seconds()) + 1
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	resp := &schemas.BifrostResponse{
+		PassthroughResponse: &schemas.BifrostPassthroughResponse{
+			StatusCode: http.StatusServiceUnavailable,
+			Headers:    map[string]string{"Retry-After": fmt.Sprintf("%d", retryAfter)},
+			Body:       []byte(msg),
+		},
+	}
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
-	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
+	return req, &schemas.LLMPluginShortCircuit{Response: resp}, nil
 }
 
 func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
@@ -452,12 +453,6 @@ func markProviderFailed(key string) {
 		until:    time.Now().Add(nextBackoff(baseTTL, maxTTL, failures)),
 		failures: failures,
 	})
-}
-
-func providerError(key string) schemas.BifrostError {
-	nowErr := *baseErr
-	nowErr.Error.Message = unavailableMessage(key)
-	return nowErr
 }
 
 func unavailableMessage(key string) string {

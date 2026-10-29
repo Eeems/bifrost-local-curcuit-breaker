@@ -23,11 +23,12 @@ type providerState struct {
 }
 
 type providerHealthConfig struct {
-	URL      string
-	PerModel bool
-	Timeout  time.Duration
-	Ignore   bool
-	Poll     time.Duration
+	URL       string
+	PerModel  bool
+	Timeout   time.Duration
+	Enabled   bool
+	SkipCheck bool
+	Poll      time.Duration
 }
 
 var (
@@ -47,6 +48,7 @@ var (
 )
 
 var perModel bool = true
+var ignoreMissing bool
 var cancelPolls context.CancelFunc
 var providerContextKey = schemas.BifrostContextKey("provider-circuit-breaker-key")
 
@@ -57,7 +59,7 @@ func Init(config any) error {
 	}
 	for k := range cfg {
 		switch k {
-		case "ttl", "max_ttl", "per_model", "providers":
+		case "ttl", "max_ttl", "per_model", "ignore_missing", "providers":
 		default:
 			return fmt.Errorf("unexpected config key %s", k)
 		}
@@ -75,6 +77,13 @@ func Init(config any) error {
 	if maxTTL < baseTTL {
 		return fmt.Errorf("maxTTL must be >= baseTTL")
 	}
+	if v, ok := cfg["ignore_missing"]; ok {
+		b, ok := v.(bool)
+		if !ok {
+			return fmt.Errorf("ignore_missing must be bool")
+		}
+		ignoreMissing = b
+	}
 	if v, ok := cfg["per_model"]; ok {
 		b, ok := v.(bool)
 		if !ok {
@@ -89,12 +98,12 @@ func Init(config any) error {
 		}
 		providerConfigs = map[string]providerHealthConfig{}
 		for k, v := range providersRaw {
-			cfg := providerHealthConfig{}
+			cfg := providerHealthConfig{Enabled: true}
 			switch val := v.(type) {
 			case map[string]any:
 				for field := range val {
 					switch field {
-					case "url", "timeout", "per_model", "ignore", "poll":
+					case "url", "timeout", "per_model", "enabled", "skip_check", "poll":
 					default:
 						return fmt.Errorf("provider %s unexpected key %s", k, field)
 					}
@@ -120,12 +129,19 @@ func Init(config any) error {
 					}
 					cfg.Timeout = d
 				}
-				if v, ok := val["ignore"]; ok {
+				if v, ok := val["enabled"]; ok {
 					b, ok := v.(bool)
 					if !ok {
-						return fmt.Errorf("provider %s ignore must be bool", k)
+						return fmt.Errorf("provider %s enabled must be bool", k)
 					}
-					cfg.Ignore = b
+					cfg.Enabled = b
+				}
+				if v, ok := val["skip_check"]; ok {
+					b, ok := v.(bool)
+					if !ok {
+						return fmt.Errorf("provider %s skip_check must be bool", k)
+					}
+					cfg.SkipCheck = b
 				}
 				if _, ok := val["poll"]; ok {
 					d := durationFromConfig(val, "poll")
@@ -134,6 +150,9 @@ func Init(config any) error {
 					}
 					cfg.Poll = d
 				}
+				if cfg.SkipCheck && cfg.Poll > 0 {
+					return fmt.Errorf("provider %s cannot set poll with skip_check", k)
+				}
 			default:
 				return fmt.Errorf("provider %s config must be object", k)
 			}
@@ -141,21 +160,13 @@ func Init(config any) error {
 		}
 	}
 	hasPoll := false
-	for _, pc := range providerConfigs {
-		if pc.Poll > 0 && !pc.Ignore && pc.URL != "" {
-			hasPoll = true
-			break
-		}
-	}
-	if !hasPoll {
-		return nil
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelPolls = cancel
 	for name, pc := range providerConfigs {
-		if pc.Poll <= 0 || pc.Ignore || pc.URL == "" {
+		if pc.Poll <= 0 || !pc.Enabled || pc.URL == "" {
 			continue
 		}
+		hasPoll = true
 		go func(name string, pc providerHealthConfig) {
 			ticker := time.NewTicker(pc.Poll)
 			defer ticker.Stop()
@@ -176,6 +187,11 @@ func Init(config any) error {
 				}
 			}
 		}(name, pc)
+	}
+	if !hasPoll {
+		cancelPolls = nil
+		cancel()
+		return nil
 	}
 	return nil
 }
@@ -204,6 +220,9 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	}
 	key := providerKeyFromRequest(req)
 	if key == "" {
+		return req, nil, nil
+	}
+	if ignoreMissing && !isConfigured(providerKey(key)) {
 		return req, nil, nil
 	}
 	if ctx.Value(providerContextKey) == key {
@@ -250,10 +269,11 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 			key = k
 		}
 	}
-	if key != "" {
-		markProviderFailed(key)
-		logProviderUnavailable(ctx, unavailableMessage(key))
+	if key == "" || (ignoreMissing && !isConfigured(providerKey(key))) {
+		return resp, bifrostErr, nil
 	}
+	markProviderFailed(key)
+	logProviderUnavailable(ctx, unavailableMessage(key))
 	return resp, bifrostErr, nil
 }
 
@@ -344,6 +364,11 @@ func resolveProviderKey(provider, model string) string {
 	return provider
 }
 
+func isConfigured(provider string) bool {
+	_, ok := providerConfigs[provider]
+	return ok
+}
+
 func providerKey(model string) string {
 	if i := strings.IndexByte(model, '/'); i >= 0 {
 		return model[:i]
@@ -374,7 +399,7 @@ func providerHealthy(key string) bool {
 		key = key[:i]
 	}
 	pc, ok := providerConfigs[key]
-	if !ok || pc.Ignore || pc.URL == "" {
+	if !ok || !pc.Enabled || pc.SkipCheck || pc.URL == "" {
 		return true
 	}
 	timeout := time.Second

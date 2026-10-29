@@ -62,32 +62,32 @@ func TestInitValidation(t *testing.T) {
 	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"foo":1}`)); err == nil {
 		t.Fatal("expected error for unexpected key")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"","timeout":1,"per_model":true,"ignore":false,"poll":1}}}`)); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"","timeout":1,"per_model":true,"enabled":true,"poll":1}}}`)); err == nil {
 		t.Fatal("expected error for empty url")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":0,"per_model":true,"ignore":false,"poll":1}}}`)); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":0,"per_model":true,"enabled":true,"poll":1}}}`)); err == nil {
 		t.Fatal("expected error for bad timeout")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":"bad","ignore":false,"poll":1}}}`)); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":"bad","enabled":true,"poll":1}}}`)); err == nil {
 		t.Fatal("expected error for bad per_model")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":"bad","poll":1}}}`)); err == nil {
-		t.Fatal("expected error for bad ignore")
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"enabled":"bad","poll":1}}}`)); err == nil {
+		t.Fatal("expected error for bad enabled")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":0}}}`)); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"enabled":true,"poll":0}}}`)); err == nil {
 		t.Fatal("expected error for bad poll")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":1,"extra":1}}}`)); err == nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"enabled":true,"poll":1,"extra":1}}}`)); err == nil {
 		t.Fatal("expected error for unexpected provider key")
 	}
-	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"ignore":false,"poll":1}}}`)); err != nil {
+	if err := Init(mustJSON(`{"ttl":1,"max_ttl":2,"providers":{"p":{"url":"http://x","timeout":1,"per_model":true,"enabled":true,"poll":1}}}`)); err != nil {
 		t.Fatalf("expected valid config, got %v", err)
 	}
 	if len(providerConfigs) != 1 {
 		t.Fatalf("expected 1 provider, got %d", len(providerConfigs))
 	}
 	pc := providerConfigs["p"]
-	if pc.URL != "http://x" || pc.Timeout != time.Second || !pc.PerModel || pc.Ignore || pc.Poll != time.Second {
+	if pc.URL != "http://x" || pc.Timeout != time.Second || !pc.PerModel || !pc.Enabled || pc.Poll != time.Second {
 		t.Fatalf("unexpected provider config: %+v", pc)
 	}
 }
@@ -162,12 +162,12 @@ func TestProviderHealthy(t *testing.T) {
 	if !providerHealthy("p") {
 		t.Fatal("expected healthy")
 	}
-	providerConfigs["p"] = providerHealthConfig{URL: srv.URL, Ignore: true}
+	providerConfigs["p"] = providerHealthConfig{URL: srv.URL, Enabled: false}
 	if !providerHealthy("p") {
 		t.Fatal("ignored should be healthy")
 	}
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: "http://127.0.0.1:1", Timeout: time.Second},
+		"p": {URL: "http://127.0.0.1:1", Timeout: time.Second, Enabled: true},
 	}
 	if providerHealthy("p") {
 		t.Fatal("expected unhealthy for unreachable")
@@ -178,13 +178,13 @@ func TestProviderHealthy(t *testing.T) {
 	}))
 	defer slow.Close()
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: slow.URL, Timeout: 100 * time.Millisecond},
+		"p": {URL: slow.URL, Timeout: 100 * time.Millisecond, Enabled: true},
 	}
 	if providerHealthy("p") {
 		t.Fatal("expected timeout to mark unhealthy")
 	}
 	providerConfigs = map[string]providerHealthConfig{
-		"p": {URL: slow.URL, Timeout: 200 * time.Millisecond},
+		"p": {URL: slow.URL, Timeout: 200 * time.Millisecond, Enabled: true},
 	}
 	if !providerHealthy("p") {
 		t.Fatal("expected larger timeout to succeed")

@@ -24,7 +24,8 @@ Provider fields (under `providers`):
 - `url`: health endpoint URL to query when checking if a provider is up.
 - `timeout`: health request timeout (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
 - `per_model`: override the global per-model setting for this provider.
-- `ignore`: skip health checks for this provider.
+- `enabled`: if this provider configuration is enabled, defaults to true.
+- `skip_check`: skip health checks but still use circuit breaker on failures.
 - `poll`: how often to check provider health in the background (seconds or [Go time.ParseDuration](https://pkg.go.dev/time#ParseDuration)).
 
 ```json

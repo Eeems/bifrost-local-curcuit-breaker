@@ -32,10 +32,12 @@ type providerHealthConfig struct {
 }
 
 var (
-	pluginName               = "provider-circuit-breaker"
-	baseTTL    time.Duration = 10 * time.Second
-	maxTTL     time.Duration = 2 * time.Minute
-	baseErr                  = &schemas.BifrostError{
+	pluginName                  = "provider-circuit-breaker"
+	baseTTL       time.Duration = 10 * time.Second
+	maxTTL        time.Duration = 2 * time.Minute
+	perModel      bool          = true
+	ignoreMissing bool          = false
+	baseErr                     = &schemas.BifrostError{
 		Error: &schemas.ErrorField{
 			Type:    strPtr("provider_unavailable"),
 			Code:    strPtr("provider_circuit_open"),
@@ -45,12 +47,9 @@ var (
 	state                    sync.Map
 	providerConfigs          map[string]providerHealthConfig
 	statusServiceUnavailable int = http.StatusServiceUnavailable
+	providerContextKey           = schemas.BifrostContextKey("provider-circuit-breaker-key")
+	cancelPolls              context.CancelFunc
 )
-
-var perModel bool = true
-var ignoreMissing bool
-var cancelPolls context.CancelFunc
-var providerContextKey = schemas.BifrostContextKey("provider-circuit-breaker-key")
 
 func Init(config any) error {
 	cfg, ok := config.(map[string]any)
@@ -254,6 +253,9 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 }
 
 func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
+	if ctx.Value("provider-circuit-breaker:skipped") != nil {
+		return resp, bifrostErr, nil
+	}
 	if bifrostErr == nil {
 		key, _ := ctx.Value(providerContextKey).(string)
 		if key != "" {
@@ -261,7 +263,7 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		}
 		return resp, nil, nil
 	}
-	if ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
+	if !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil
 	}
 	key := providerKeyFromResponse(resp, bifrostErr)
@@ -270,7 +272,10 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 			key = k
 		}
 	}
-	if key == "" || (ignoreMissing && !isConfigured(providerKey(key))) {
+	if key == "" {
+		return resp, bifrostErr, nil
+	}
+	if ignoreMissing && !isConfigured(providerKey(key)) {
 		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s posthook skipped", key))
 		return resp, bifrostErr, nil
 	}

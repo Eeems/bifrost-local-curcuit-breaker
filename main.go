@@ -256,16 +256,6 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 	if ctx.Value("provider-circuit-breaker:skipped") != nil {
 		return resp, bifrostErr, nil
 	}
-	if bifrostErr == nil {
-		key, _ := ctx.Value(providerContextKey).(string)
-		if key != "" {
-			ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s succeeded", key))
-		}
-		return resp, nil, nil
-	}
-	if !isLivenessFailure(bifrostErr) {
-		return resp, bifrostErr, nil
-	}
 	key := providerKeyFromResponse(resp, bifrostErr)
 	if key == "" {
 		if k, ok := ctx.Value(providerContextKey).(string); ok {
@@ -273,6 +263,14 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		}
 	}
 	if key == "" {
+		return resp, bifrostErr, nil
+	}
+	if bifrostErr == nil {
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s succeeded", key))
+		return resp, nil, nil
+	}
+	if !isLivenessFailure(bifrostErr) {
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s failed", key))
 		return resp, bifrostErr, nil
 	}
 	if ignoreMissing && !isConfigured(providerKey(key)) {

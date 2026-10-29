@@ -243,19 +243,12 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 			return req, nil, nil
 		}
 	}
-	v, _ := state.Load(key)
 	msg := unavailableMessage(key)
 	ctx.Log(schemas.LogLevelWarn, msg)
 	nowErr := *baseErr
 	nowErr.Error.Message = msg
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
-	return req, &schemas.LLMPluginShortCircuit{Response: &schemas.BifrostResponse{
-		PassthroughResponse: &schemas.BifrostPassthroughResponse{
-			StatusCode: http.StatusServiceUnavailable,
-			Headers:    map[string]string{"Retry-After": fmt.Sprintf("%d", max(1, int(time.Until(v.(*providerState).until).Seconds())+1))},
-			Body:       []byte(msg),
-		},
-	}, Error: &nowErr}, nil
+	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
 }
 
 func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {

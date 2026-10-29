@@ -386,7 +386,7 @@ func isLivenessFailure(err *schemas.BifrostError) bool {
 		return false
 	}
 	if (err.Error != nil && err.Error.Code != nil && *err.Error.Code == "provider_circuit_open") ||
-		(err.StatusCode != nil && *err.StatusCode >= 500 && *err.StatusCode <= 599) {
+		(err.StatusCode != nil && (*err.StatusCode == 429 || (*err.StatusCode >= 500 && *err.StatusCode <= 599))) {
 		return true
 	}
 	errType := ""

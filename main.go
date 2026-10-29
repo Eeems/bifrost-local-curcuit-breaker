@@ -38,6 +38,7 @@ var (
 	perModel      bool          = true
 	ignoreMissing bool          = false
 	baseErr                     = &schemas.BifrostError{
+		StatusCode: func() *int { v := http.StatusServiceUnavailable; return &v }(),
 		Error: &schemas.ErrorField{
 			Type:    strPtr("provider_unavailable"),
 			Code:    strPtr("provider_circuit_open"),

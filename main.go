@@ -252,6 +252,9 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 	if provider == "" {
 		return resp, bifrostErr, nil
 	}
+	if model := providerKeyFromResponse(resp); model != "" {
+		provider = resolveProviderKey(provider, model)
+	}
 	markProviderFailed(provider)
 	logProviderUnavailable(ctx, unavailableMessage(provider))
 	return resp, bifrostErr, nil
@@ -282,28 +285,35 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 	if req.RerankRequest != nil {
 		return resolveProviderKey(string(req.RerankRequest.Provider), req.RerankRequest.Model)
 	}
-	if req.SpeechRequest != nil {
-		return resolveProviderKey(string(req.SpeechRequest.Provider), req.SpeechRequest.Model)
-	}
-	if req.TranscriptionRequest != nil {
-		return resolveProviderKey(string(req.TranscriptionRequest.Provider), req.TranscriptionRequest.Model)
-	}
 	return ""
 }
 
-func providerKeyFromError(err *schemas.BifrostError) string {
-	provider := string(err.ExtraFields.Provider)
-	if provider == "" {
+func providerKeyFromResponse(resp *schemas.BifrostResponse) string {
+	if resp == nil {
 		return ""
 	}
-	model := err.ExtraFields.RoutingInfo.Model
-	if model == "" {
-		model = err.ExtraFields.ResolvedModelUsed
+	if resp.ChatResponse != nil {
+		return resolveProviderKey(string(resp.ChatResponse.Provider), resp.ChatResponse.Model)
 	}
-	if model == "" {
-		model = err.ExtraFields.OriginalModelRequested
+	if resp.ResponsesResponse != nil {
+		return resolveProviderKey(string(resp.ResponsesResponse.Provider), resp.ResponsesResponse.Model)
 	}
-	return resolveProviderKey(provider, model)
+	if resp.TextCompletionResponse != nil {
+		return resolveProviderKey(string(resp.TextCompletionResponse.Provider), resp.TextCompletionResponse.Model)
+	}
+	if resp.EmbeddingResponse != nil {
+		return resolveProviderKey(string(resp.EmbeddingResponse.Provider), resp.EmbeddingResponse.Model)
+	}
+	if resp.ImageGenerationResponse != nil {
+		return resolveProviderKey(string(resp.ImageGenerationResponse.Provider), resp.ImageGenerationResponse.Model)
+	}
+	if resp.OCRResponse != nil {
+		return resolveProviderKey(string(resp.OCRResponse.Provider), resp.OCRResponse.Model)
+	}
+	if resp.RerankResponse != nil {
+		return resolveProviderKey(string(resp.RerankResponse.Provider), resp.RerankResponse.Model)
+	}
+	return ""
 }
 
 func resolveProviderKey(provider, model string) string {

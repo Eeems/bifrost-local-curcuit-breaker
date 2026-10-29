@@ -223,6 +223,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		return req, nil, nil
 	}
 	if ignoreMissing && !isConfigured(providerKey(key)) {
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s prehook skipped", key))
 		return req, nil, nil
 	}
 	if ctx.Value(providerContextKey) == key {
@@ -233,7 +234,7 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 	} else if !providerHealthy(key) {
 		markProviderFailed(providerKey(key))
 	} else {
-		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s is healthy", key))
 		ctx.SetValue(providerContextKey, key)
 		raw, ok := state.Load(key)
 		if !ok {
@@ -247,16 +248,16 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		}
 	}
 	nowErr := providerError(key)
-	logProviderUnavailable(ctx, nowErr.Error.Message)
+	ctx.Log(schemas.LogLevelWarn, nowErr.Error.Message)
 	ctx.SetValue("provider-circuit-breaker:skipped", true)
 	return req, &schemas.LLMPluginShortCircuit{Error: &nowErr}, nil
 }
 
 func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
 	if bifrostErr == nil {
-		rawKey, _ := ctx.Value(providerContextKey).(string)
-		if rawKey != "" {
-			state.Delete(rawKey)
+		key, _ := ctx.Value(providerContextKey).(string)
+		if key != "" {
+			ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s succeeded", key))
 		}
 		return resp, nil, nil
 	}
@@ -270,10 +271,11 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 		}
 	}
 	if key == "" || (ignoreMissing && !isConfigured(providerKey(key))) {
+		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("%s posthook skipped", key))
 		return resp, bifrostErr, nil
 	}
 	markProviderFailed(key)
-	logProviderUnavailable(ctx, unavailableMessage(key))
+	ctx.Log(schemas.LogLevelWarn, unavailableMessage(key))
 	return resp, bifrostErr, nil
 }
 
@@ -458,10 +460,6 @@ func unavailableMessage(key string) string {
 	raw, _ := state.Load(key)
 	entry := raw.(*providerState)
 	return fmt.Sprintf("%s is temporarily unavailable until %s", key, entry.until.UTC().Format(time.RFC3339))
-}
-
-func logProviderUnavailable(ctx *schemas.BifrostContext, msg string) {
-	ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s", msg))
 }
 
 func nextBackoff(base, max time.Duration, failures int) time.Duration {

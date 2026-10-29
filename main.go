@@ -174,12 +174,13 @@ func Init(config any) error {
 					return
 				case <-ticker.C:
 					if raw, ok := state.Load(name); ok {
-						entry := raw.(*providerState)
-						if time.Now().Before(entry.until) {
+						if time.Now().Before(raw.(*providerState).until) {
 							continue
 						}
 					}
-					if !providerHealthy(name) {
+					if providerHealthy(name) {
+						state.Delete(name)
+					} else {
 						markProviderFailed(name)
 					}
 				}

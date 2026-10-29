@@ -215,7 +215,6 @@ func PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*sche
 		markProviderFailed(providerKey(key))
 	} else {
 		ctx.Log(schemas.LogLevelWarn, fmt.Sprintf("provider-circuit-breaker: %s is healthy", key))
-		ctx.SetValue("provider-circuit-breaker:provider", providerKey(key))
 		ctx.SetValue(providerContextKey, key)
 		raw, ok := state.Load(key)
 		if !ok {
@@ -245,18 +244,16 @@ func PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bif
 	if ctx.Value("provider-circuit-breaker:skipped") != nil || !isLivenessFailure(bifrostErr) {
 		return resp, bifrostErr, nil
 	}
-	provider, ok := ctx.Value("provider-circuit-breaker:provider").(string)
-	if !ok || provider == "" {
-		provider = providerKeyFromError(bifrostErr)
+	key := providerKeyFromResponse(resp, bifrostErr)
+	if key == "" {
+		if k, ok := ctx.Value(providerContextKey).(string); ok {
+			key = k
+		}
 	}
-	if provider == "" {
-		return resp, bifrostErr, nil
+	if key != "" {
+		markProviderFailed(key)
+		logProviderUnavailable(ctx, unavailableMessage(key))
 	}
-	if model := providerKeyFromResponse(resp); model != "" {
-		provider = resolveProviderKey(provider, model)
-	}
-	markProviderFailed(provider)
-	logProviderUnavailable(ctx, unavailableMessage(provider))
 	return resp, bifrostErr, nil
 }
 
@@ -285,34 +282,48 @@ func providerKeyFromRequest(req *schemas.BifrostRequest) string {
 	if req.RerankRequest != nil {
 		return resolveProviderKey(string(req.RerankRequest.Provider), req.RerankRequest.Model)
 	}
+	if req.SpeechRequest != nil {
+		return resolveProviderKey(string(req.SpeechRequest.Provider), req.SpeechRequest.Model)
+	}
+	if req.TranscriptionRequest != nil {
+		return resolveProviderKey(string(req.TranscriptionRequest.Provider), req.TranscriptionRequest.Model)
+	}
 	return ""
 }
 
-func providerKeyFromResponse(resp *schemas.BifrostResponse) string {
+func providerKeyFromResponse(resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) string {
 	if resp == nil {
 		return ""
 	}
-	if resp.ChatResponse != nil {
-		return resolveProviderKey(string(resp.ChatResponse.Provider), resp.ChatResponse.Model)
+	provider := ""
+	if bifrostErr != nil {
+		provider = string(bifrostErr.ExtraFields.Provider)
+		if provider == "" {
+			provider = string(bifrostErr.ExtraFields.RoutingInfo.Provider)
+		}
 	}
 	if resp.ResponsesResponse != nil {
-		return resolveProviderKey(string(resp.ResponsesResponse.Provider), resp.ResponsesResponse.Model)
+		return resolveProviderKey(provider, resp.ResponsesResponse.Model)
+	}
+	if resp.ChatResponse != nil {
+		return resolveProviderKey(provider, resp.ChatResponse.Model)
 	}
 	if resp.TextCompletionResponse != nil {
-		return resolveProviderKey(string(resp.TextCompletionResponse.Provider), resp.TextCompletionResponse.Model)
+		return resolveProviderKey(provider, resp.TextCompletionResponse.Model)
 	}
 	if resp.EmbeddingResponse != nil {
-		return resolveProviderKey(string(resp.EmbeddingResponse.Provider), resp.EmbeddingResponse.Model)
+		return resolveProviderKey(provider, resp.EmbeddingResponse.Model)
 	}
 	if resp.ImageGenerationResponse != nil {
-		return resolveProviderKey(string(resp.ImageGenerationResponse.Provider), resp.ImageGenerationResponse.Model)
+		return resolveProviderKey(provider, resp.ImageGenerationResponse.Model)
 	}
 	if resp.OCRResponse != nil {
-		return resolveProviderKey(string(resp.OCRResponse.Provider), resp.OCRResponse.Model)
+		return resolveProviderKey(provider, resp.OCRResponse.Model)
 	}
 	if resp.RerankResponse != nil {
-		return resolveProviderKey(string(resp.RerankResponse.Provider), resp.RerankResponse.Model)
+		return resolveProviderKey(provider, resp.RerankResponse.Model)
 	}
+
 	return ""
 }
 
